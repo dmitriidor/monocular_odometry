@@ -1,5 +1,6 @@
 #include <iostream>
 #include <ctime>
+#include <numeric>
 
 #include <opencv4/opencv2/opencv.hpp>
 #include <opencv4/opencv2/opencv_modules.hpp>
@@ -45,7 +46,7 @@ int main(int, char**) {
 
     Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(7, 7), 1, 1);
     Ptr<cuda::Filter> laplace_filter = cuda::createLaplacianFilter(CV_16U, CV_16U, 1); 
-    cuda::SURF_CUDA surf;
+    cuda::SURF_CUDA surf(100, 4, 2, true);
 
     vector<KeyPoint> keys_1, keys_2;
     cuda::GpuMat gpu_keys_1, gpu_keys_2;
@@ -58,12 +59,13 @@ int main(int, char**) {
 
     Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_L1);
 
+    clock_t start, end; 
     for(int iter = 1; iter < 100+1; iter++) {
-
         gpu_keys_1 = gpu_keys_2; 
         gpu_descriptors_1 = gpu_descriptors_2;
         gpu_frame_1 = gpu_frame_2; 
         cap >> frame_2;
+        
 
         gpu_frame_2.upload(frame_2); 
         gpu_frame_filtered.upload(frame_2);
@@ -90,7 +92,7 @@ int main(int, char**) {
         matcher->knnMatch(gpu_descriptors_1, gpu_descriptors_2, matches, 2);
 
         vector<DMatch> filtered_matches; 
-        float ratio = 0.75; 
+        float ratio = 0.01; 
         for(int i = 0; i < matches.size(); i++) {
             if(matches[i][0].distance < matches[i][1].distance*ratio) {
                 filtered_matches.push_back(matches[i][0]);
@@ -100,46 +102,103 @@ int main(int, char**) {
         surf.downloadKeypoints(gpu_keys_1, keys_1);
         surf.downloadKeypoints(gpu_keys_2, keys_2);
 
-        vector<Point2f> filtered_points_1(filtered_matches.size(), Point2f(0, 0));
-        vector<Point2f> filtered_points_2(filtered_matches.size(), Point2f(0, 0)); 
-        for(int i = 0; i < filtered_matches.size(); i++) {
-            filtered_points_1[i] = keys_1[filtered_matches[i].queryIdx].pt;
-            filtered_points_2[i] = keys_2[filtered_matches[i].trainIdx].pt;
-        }
-
+        // vector<Point2f> filtered_points_1(filtered_matches.size(), Point2f(0, 0));
+        // vector<Point2f> filtered_points_2(filtered_matches.size(), Point2f(0, 0)); 
+        // for(int i = 0; i < filtered_matches.size(); i++) {
+        //     filtered_points_1[i] = keys_1[filtered_matches[i].queryIdx].pt;
+        //     filtered_points_2[i] = keys_2[filtered_matches[i].trainIdx].pt;
+        // }
         Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
-        Mat e_mat; 
+        Mat h_mat;
+        vector<Mat> rot_mat, t_vec, normies; 
+        Mat ang, norm_rot_mat;
 
-        try {                    
-            e_mat = findEssentialMat(filtered_points_1, filtered_points_2, i_mat, RANSAC);
+        try {
+            std::vector<Point2f> obj;
+            std::vector<Point2f> scene;
+            for( size_t i = 0; i < filtered_matches.size(); i++ ) {
+                //-- Get the keypoints from the good matches
+                obj.push_back( keys_1[ filtered_matches[i].queryIdx ].pt );
+                scene.push_back( keys_2[ filtered_matches[i].trainIdx ].pt );
+            }
+            h_mat = findHomography( obj, scene, RANSAC , 0.01, noArray());
+            decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
+            norm_rot_mat = (Mat_<double>(3, 3) << rot_mat[0].at<double>(0,0), rot_mat[0].at<double>(1,0), rot_mat[0].at<double>(2,0),
+                                                  rot_mat[0].at<double>(3,0), rot_mat[0].at<double>(4,0), rot_mat[0].at<double>(5,0),
+                                                  rot_mat[0].at<double>(6,0), rot_mat[0].at<double>(7,0), rot_mat[0].at<double>(8,0));
+            Rodrigues(norm_rot_mat, ang, noArray());
+            cout << ang*360/CV_PI << endl; 
+        }
+        catch(...){
+            cout << "Problem!" << endl; 
+        }
 
-            Mat rot_mat, t_vec; 
-            recoverPose(e_mat, filtered_points_1, filtered_points_2, rot_mat, t_vec);
+        // decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
 
-            cout << rot_mat << "\n" << endl;
-            cout << t_vec << endl; 
+        // Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
+        // Mat h_mat, rot_mat, t_vec; node + launch 
 
-            cout << endl;
+        // h_mat = findHomography(filtered_points_1, filtered_points_2, RANSAC);
 
-            vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
-                                                {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
-                                                {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
-                
-            AngleConverter converter; 
-            converter.SetAndConvertR(rotations);
+        // decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, noArray()); 
+
+        // cout << rot_mat << endl; 
+        // cout << t_vec << endl; 
+
+        // vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
+        //                                     {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
+        //                                     {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
             
-            vector<float> angles(3, 0);
-            angles = converter.GetYawPitchRollSTD();
+        // AngleConverter converter; 
+        // converter.SetAndConvertR(rotations);
+    
 
-            for(int i = 0; i < angles.size(); i++)
-                cout << angles[i]*360/3.14 << " ! ";
+        // vector<float> angles(3, 0);
+        // angles = converter.GetYawPitchRollSTD();
 
-            cout << endl; 
-        }
-        catch(...) {
-            cout << "Oops!" << endl;
-        }
+        // for(int i = 0; i < angles.size(); i++)
+        //     cout << angles[i]*360/3.14 << " ! ";
 
+        // cout << endl; 
+
+        // try {                    
+        //     // e_mat = findEssentialMat(filtered_points_1, filtered_points_1, i_mat, RANSAC, 0.9, 0.1, 10000, noArray());
+
+        //     // cout << e_mat << "\n" << endl; 
+ 
+        //     // recoverPose(e_mat, filtered_points_1, filtered_points_1, i_mat, rot_mat, t_vec);
+
+        //     // cout << rot_mat << "\n" << endl;
+
+        //     // cout << t_vec << endl; 
+
+        //     // cout << endl;
+        //     h_mat = cv::findHomography(filtered_points_1, filtered_points_2, RANSAC);
+
+        //     decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, noArray()); 
+
+        //     cout << rot_mat << endl; 
+        //     cout << t_vec << endl; 
+
+        //     vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
+        //                                         {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
+        //                                         {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
+                
+        //     AngleConverter converter; 
+        //     converter.SetAndConvertR(rotations);
+        
+
+        //     vector<float> angles(3, 0);
+        //     angles = converter.GetYawPitchRollSTD();
+
+        //     for(int i = 0; i < angles.size(); i++)
+        //         cout << angles[i]*360/3.14 << " ! ";
+
+        //     cout << endl; 
+        // }
+        // catch(...) {
+        //     cout << "Oops!" << endl;
+        // }
 
 
         // float val = Pi/360; 
@@ -171,6 +230,7 @@ int main(int, char**) {
         // imshow("TD: ", depthmeter.pipeline.frame_laplacian);
         // imshow("Matches", matches_img);
         imshow("Filtered Matches", filtered_matches_img);
+
         waitKey(0);
     }
 };
