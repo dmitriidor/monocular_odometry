@@ -24,7 +24,7 @@ using namespace cv;
 int main(int, char**) {
 
 
-    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_3.avi");
+    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_4.avi");
 
     if(!cap.isOpened()){
         cout << "Error opening video stream or file" << endl;
@@ -63,7 +63,6 @@ int main(int, char**) {
         gpu_keys_1 = gpu_keys_2; 
         gpu_descriptors_1 = gpu_descriptors_2;
         gpu_frame_1 = gpu_frame_2; 
-        cap.set(CAP_PROP_POS_MSEC, 10*iter);
         cap >> frame_2;
 
         gpu_frame_2.upload(frame_2); 
