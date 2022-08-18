@@ -12,6 +12,16 @@
 #include <opencv4/opencv2/cudafeatures2d.hpp>
 #include <opencv4/opencv2/core/cuda.hpp>
 #include <opencv4/opencv2/cudaarithm.hpp>
+#include <opencv4/opencv2/xfeatures2d/cuda.hpp>
+#include <opencv4/opencv2/cudaoptflow.hpp>
+#include <opencv4/opencv2/cudalegacy.hpp>
+#include "opencv2/core.hpp"
+#include <opencv2/core/utility.hpp>
+#include "opencv2/imgproc.hpp"
+#include "opencv2/highgui.hpp"
+#include "opencv2/video.hpp"
+#include "opencv2/cudaoptflow.hpp"
+#include "opencv2/cudaimgproc.hpp"
 
 #include "pose_estimator/pose_estimator_class.hpp"
 #include "angle_converter/angle_converter_class.hpp"
@@ -19,6 +29,49 @@
 
 using namespace std;
 using namespace cv;
+
+static void download(const cuda::GpuMat& d_mat, vector<Point2f>& vec)
+{
+    vec.resize(d_mat.cols);
+    Mat mat(1, d_mat.cols, CV_32FC2, (void*)&vec[0]);
+    d_mat.download(mat);
+}
+static void download(const cuda::GpuMat& d_mat, vector<uchar>& vec)
+{
+    vec.resize(d_mat.cols);
+    Mat mat(1, d_mat.cols, CV_8U, (void*)&vec[0]);
+    d_mat.download(mat);
+}
+static void drawArrows(Mat& frame, const vector<Point2f>& prevPts, const vector<Point2f>& nextPts, const vector<uchar>& status, Scalar line_color = Scalar(0, 0, 255))
+{
+    for (size_t i = 0; i < prevPts.size(); ++i)
+    {
+        if (status[i])
+        {
+            int line_thickness = 1;
+            Point p = prevPts[i];
+            cout << p << endl;
+            Point q = nextPts[i];
+            cout << q << "\n" << endl; 
+            double angle = atan2((double) p.y - q.y, (double) p.x - q.x);
+            double hypotenuse = sqrt( (double)(p.y - q.y)*(p.y - q.y) + (double)(p.x - q.x)*(p.x - q.x) );
+            if (hypotenuse < 1.0)
+                continue;
+            q.x = (int) (p.x - 3 * hypotenuse * cos(angle));
+            q.y = (int) (p.y - 3 * hypotenuse * sin(angle));
+            // Now we draw the main line of the arrow.
+            line(frame, p, q, line_color, line_thickness);
+            // Now draw the tips of the arrow. I do some scaling so that the
+            // tips look proportional to the main line of the arrow.
+            p.x = (int) (q.x + 9 * cos(angle + CV_PI / 4));
+            p.y = (int) (q.y + 9 * sin(angle + CV_PI / 4));
+            line(frame, p, q, line_color, line_thickness);
+            p.x = (int) (q.x + 9 * cos(angle - CV_PI / 4));
+            p.y = (int) (q.y + 9 * sin(angle - CV_PI / 4));
+            line(frame, p, q, line_color, line_thickness);
+        }
+    }
+}
 
 int main(int, char**) {
 
@@ -42,134 +95,86 @@ int main(int, char**) {
     gpu_frame_2.upload(frame_1);
     cuda::cvtColor(gpu_frame_2, gpu_frame_2, COLOR_BGR2GRAY);
 
-    Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(7, 7), 1, 1);
+    Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(5, 5), 1, 1);
     Ptr<cuda::Filter> laplace_filter = cuda::createLaplacianFilter(CV_16U, CV_16U, 1); 
-    Ptr<cuda::ORB> feature_extractor = cuda::ORB::create(500);
 
-    // gaussian_filter->apply(gpu_frame_2, gpu_frame_2);
-    // laplace_filter->apply(gpu_frame_2, gpu_frame_2);
+    Mat corners_1, corners_2; 
+    cuda::GpuMat gpu_corners_1, gpu_corners_2; 
+    Ptr<cuda::CornersDetector> detector= cuda::createGoodFeaturesToTrackDetector(CV_16U, 100, 0.1, 10, 5, false);
 
-    vector<KeyPoint> keys_1, keys_2;
-    cuda::GpuMat descriptors_1, descriptors_2; 
-    gpu_frame_1 = gpu_frame_2; 
+    TermCriteria criteria = TermCriteria((TermCriteria::COUNT) + (TermCriteria::EPS), 10, 0.03);
+    int loops = 100; 
+    Ptr<cuda::SparsePyrLKOpticalFlow> flow = cuda::SparsePyrLKOpticalFlow::create(Size(21, 21), 3, loops);
 
-    feature_extractor->detectAndCompute(gpu_frame_2, noArray(), keys_2, descriptors_2);
-    Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_HAMMING);
+    gpu_frame_2.convertTo(gpu_frame_2, CV_16U, 1/pow(2, 8));
+    detector->detect(gpu_frame_2, gpu_corners_2);
+
+    cuda::GpuMat gpu_status, gpu_error; 
 
     for(int iter = 1; iter < 100+1; iter++) {
 
-        keys_1 = keys_2; 
-        descriptors_1 = descriptors_2;
+        gpu_corners_1 = gpu_corners_2; 
         gpu_frame_1 = gpu_frame_2; 
-        cap.set(CAP_PROP_POS_MSEC, 1000*iter);
         cap >> frame_2;
 
         gpu_frame_2.upload(frame_2); 
-        gpu_frame_filtered.upload(frame_2);
+        // gpu_frame_filtered.upload(frame_2);
         cuda::cvtColor(gpu_frame_2, gpu_frame_2, COLOR_BGR2GRAY);
-        cuda::cvtColor(gpu_frame_filtered, gpu_frame_filtered, COLOR_BGR2GRAY);
-        gpu_frame_filtered.convertTo(gpu_frame_filtered, CV_16U);
-        cuda::normalize(gpu_frame_filtered, gpu_frame_filtered, 0, pow(2, 16), NORM_MINMAX, CV_16U);
-        gaussian_filter->apply(gpu_frame_filtered, gpu_frame_filtered);
-        laplace_filter->apply(gpu_frame_filtered, gpu_frame_filtered); 
-
-        double minimum_value, maximum_value; 
-        cuda::minMax(gpu_frame_filtered, &minimum_value, &maximum_value);  
-
+        // cuda::cvtColor(gpu_frame_filtered, gpu_frame_filtered, COLOR_BGR2GRAY);
+        // gpu_frame_filtered.convertTo(gpu_frame_filtered, CV_16U);
+        // cuda::normalize(gpu_frame_filtered, gpu_frame_filtered, 0, pow(2, 16), NORM_MINMAX, CV_16U);
+        // gaussian_filter->apply(gpu_frame_filtered, gpu_frame_filtered);
+        // laplace_filter->apply(gpu_frame_filtered, gpu_frame_filtered); 
+        // double minimum_value, maximum_value; 
+        // cuda::minMax(gpu_frame_filtered, &minimum_value, &maximum_value);  
         gpu_frame_2.convertTo(gpu_frame_2, CV_16U);
         cuda::normalize(gpu_frame_2, gpu_frame_2, 0, pow(2, 16), NORM_MINMAX, CV_16U);
-        cuda::subtract(gpu_frame_2, gpu_frame_filtered, gpu_frame_2);
-        cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
-        gpu_frame_2.convertTo(gpu_frame_2, CV_8U, 1/pow(2, 8));
-
-        feature_extractor->detectAndCompute(gpu_frame_2, noArray(), keys_2, descriptors_2);
-
-        vector< vector<DMatch> > matches; 
-        matcher->knnMatch(descriptors_1, descriptors_2, matches, 2);
-
-
-        vector<DMatch> filtered_matches; 
-        float ratio = 0.001; 
-        for(int i = 0; i < matches.size(); i++) {
-            if(matches[i][0].distance < matches[i][1].distance*ratio) {
-                filtered_matches.push_back(matches[i][0]);
-            }
-        }
-
-        vector<Point2f> filtered_points_1(filtered_matches.size(), Point2f(0, 0));
-        vector<Point2f> filtered_points_2(filtered_matches.size(), Point2f(0, 0)); 
-        for(int i = 0; i < filtered_matches.size(); i++) {
-            filtered_points_1[i] = keys_1[filtered_matches[i].queryIdx].pt;
-            filtered_points_2[i] = keys_2[filtered_matches[i].trainIdx].pt;
-        }
-
-        try {
-            Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
-            Mat e_mat; 
-            e_mat = findEssentialMat(filtered_points_1, filtered_points_2, i_mat, RANSAC);
-
-            cout << e_mat << "\n" <<endl;
-
-            Mat rot_mat, t_vec; 
-            recoverPose(e_mat, filtered_points_1, filtered_points_2, rot_mat, t_vec);
-
-            cout << rot_mat << "\n" << endl;
-            cout << t_vec << endl; 
-
-            cout << endl;
-
-            vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
-                                                {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
-                                                {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
-                
-            AngleConverter converter; 
-            converter.SetAndConvertR(rotations);
-            
-            vector<float> angles(3, 0);
-            angles = converter.GetYawPitchRollSTD();
-
-            for(int i = 0; i < angles.size(); i++)
-                cout << angles[i]*360/3.14 << " ! ";
-
-            cout << endl; 
-        }
-        catch(...) {
-            cout << "Oops!" << endl; 
-        }
-
-
-        // gpu_frame_1.download(frame_1);
-
-
-        // float val = Pi/360; 
-        // transform(yaw_pitch_roll.begin(), yaw_pitch_roll.end(), yaw_pitch_roll.begin(), [val](int &element){return element*val;});
-
-        // Mat matches_img; 
-        // vector<KeyPoint> keys_1, keys_2;
-
-        // detector->convert(gpu_keys_1, keys_1);
-        // detector->convert(gpu_keys_1, keys_2);
-
-        // Mat matches_img; 
-        // drawMatches(frame_1, keys_1, frame_2, keys_2, matches, matches_img);
+        // cuda::subtract(gpu_frame_2, gpu_frame_filtered, gpu_frame_2);
+        // cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
+        
+        if(iter%1 == 0)
+            detector->detect(gpu_frame_1, gpu_corners_1);
 
         gpu_frame_1.download(frame_1);
         gpu_frame_2.download(frame_2);
 
-        Mat filtered_matches_img; 
-        drawMatches(frame_1, keys_1, frame_2, keys_2, filtered_matches, filtered_matches_img);
-        // Mat blurred_img;
-        // GaussianBlur(frame_1, blurred_img, cv::Size(0, 0), 3);
-        // addWeighted(frame_1, 1.5, blurred_img, -1, 0, blurred_img);
+        gpu_corners_1.download(corners_1);
+        gpu_corners_2.download(corners_2);
 
-        Mat shit; 
-        gpu_frame_filtered.download(shit); 
-    
+        flow->calc(gpu_frame_1, gpu_frame_2, gpu_corners_1, gpu_corners_2, gpu_status, gpu_error); 
+
+        // Mat filtered_matches_img; 
+        // drawMatches(frame_1, keys_1, frame_2, keys_2, filtered_matches, filtered_matches_img);
+        // for(int i = 0; i < corners_1.cols; i++) {
+        //     Point2f center_1 = corners_1.at<Point2f>(0, i);
+        //     circle(frame_1, center_1, 5, 0, 2, 8);
+        // }
+
+        for(int i = 0; i < corners_1.cols; i++) {
+            Point2f center_1 = corners_1.at<Point2f>(0, i);
+            circle(frame_1, center_1, 5, 0, 2, 8);
+        }
+
+        for(int i = 0; i < corners_2.cols; i++) {
+            Point2f center_2 = corners_2.at<Point2f>(0, i);
+            circle(frame_2, center_2, 5, 0, 2, 8);
+        }
+
+        vector<uchar> status(gpu_status.cols);
+        download(gpu_status, status);
+        drawArrows(frame_1, corners_1, corners_2, status, Scalar(255, 0, 0));
+        imshow("PyrLK [Sparse]", frame_1);
+        // vector<float> err;
+        // download(gpu_error, err);
+        // for(int i = 0; i < status.size(); i++)
+        //     cout << err[i] << endl;
+
+
         imshow("Frame 1", frame_1);
         imshow("Frame 2", frame_2);
         // imshow("TD: ", depthmeter.pipeline.frame_laplacian);
         // imshow("Matches", matches_img);
-        imshow("Filtered Matches", filtered_matches_img);
+        // imshow("Filtered Matches", filtered_matches_img);
         waitKey(0);
     }
 };
