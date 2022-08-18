@@ -89,7 +89,7 @@ int main(int, char**) {
 
 
         vector<DMatch> filtered_matches; 
-        float ratio = 0.75; 
+        float ratio = 0.001; 
         for(int i = 0; i < matches.size(); i++) {
             if(matches[i][0].distance < matches[i][1].distance*ratio) {
                 filtered_matches.push_back(matches[i][0]);
@@ -103,34 +103,40 @@ int main(int, char**) {
             filtered_points_2[i] = keys_2[filtered_matches[i].trainIdx].pt;
         }
 
-        Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
-        Mat e_mat; 
-        e_mat = findEssentialMat(filtered_points_1, filtered_points_2, i_mat, RANSAC);
+        try {
+            Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
+            Mat e_mat; 
+            e_mat = findEssentialMat(filtered_points_1, filtered_points_2, i_mat, RANSAC);
 
-        cout << e_mat << "\n" <<endl;
+            cout << e_mat << "\n" <<endl;
 
-        Mat rot_mat, t_vec; 
-        recoverPose(e_mat, filtered_points_1, filtered_points_2, rot_mat, t_vec);
+            Mat rot_mat, t_vec; 
+            recoverPose(e_mat, filtered_points_1, filtered_points_2, rot_mat, t_vec);
 
-        cout << rot_mat << "\n" << endl;
-        cout << t_vec << endl; 
+            cout << rot_mat << "\n" << endl;
+            cout << t_vec << endl; 
 
-        cout << endl;
+            cout << endl;
 
-        vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
-                                            {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
-                                            {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
+            vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
+                                                {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
+                                                {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
+                
+            AngleConverter converter; 
+            converter.SetAndConvertR(rotations);
             
-        AngleConverter converter; 
-        converter.SetAndConvertR(rotations);
-        
-        vector<float> angles(3, 0);
-        angles = converter.GetYawPitchRollSTD();
+            vector<float> angles(3, 0);
+            angles = converter.GetYawPitchRollSTD();
 
-        for(int i = 0; i < angles.size(); i++)
-            cout << angles[i]*360/3.14 << " ! ";
+            for(int i = 0; i < angles.size(); i++)
+                cout << angles[i]*360/3.14 << " ! ";
 
-        cout << endl; 
+            cout << endl; 
+        }
+        catch(...) {
+            cout << "Oops!" << endl; 
+        }
+
 
         // gpu_frame_1.download(frame_1);
 
