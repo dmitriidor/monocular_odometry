@@ -102,9 +102,6 @@ int main(int, char**) {
     cuda::GpuMat gpu_corners_1, gpu_corners_2; 
     Ptr<cuda::CornersDetector> detector= cuda::createGoodFeaturesToTrackDetector(CV_16U, 100, 0.1, 10, 5, false);
 
-    TermCriteria criteria = TermCriteria((TermCriteria::COUNT) + (TermCriteria::EPS), 10, 0.03);
-    int loops = 100; 
-    Ptr<cuda::SparsePyrLKOpticalFlow> flow = cuda::SparsePyrLKOpticalFlow::create(Size(21, 21), 3, loops);
 
     gpu_frame_2.convertTo(gpu_frame_2, CV_16U, 1/pow(2, 8));
     detector->detect(gpu_frame_2, gpu_corners_2);
@@ -141,8 +138,6 @@ int main(int, char**) {
         gpu_corners_1.download(corners_1);
         gpu_corners_2.download(corners_2);
 
-        flow->calc(gpu_frame_1, gpu_frame_2, gpu_corners_1, gpu_corners_2, gpu_status, gpu_error); 
-
         // Mat filtered_matches_img; 
         // drawMatches(frame_1, keys_1, frame_2, keys_2, filtered_matches, filtered_matches_img);
         // for(int i = 0; i < corners_1.cols; i++) {
@@ -160,10 +155,6 @@ int main(int, char**) {
             circle(frame_2, center_2, 5, 0, 2, 8);
         }
 
-        vector<uchar> status(gpu_status.cols);
-        download(gpu_status, status);
-        drawArrows(frame_1, corners_1, corners_2, status, Scalar(255, 0, 0));
-        imshow("PyrLK [Sparse]", frame_1);
         // vector<float> err;
         // download(gpu_error, err);
         // for(int i = 0; i < status.size(); i++)
@@ -190,7 +181,4 @@ node:
 >> 3. calculate speed
 5. form message 
 */
-// pochette 19100 no 
-//petite boite 79k 2-14c weeks 
-//mini boite 35k emaar
-//souple 43500 brown 46k black 
+
