@@ -106,17 +106,73 @@ int main(int, char**) {
         cdst = Mat::zeros(frame_1.rows, frame_1.cols, CV_8UC1);
         cdstP = Mat::zeros(frame_1.rows, frame_1.cols, CV_8UC1);
 
-        vector<Vec4i> linesP; // will hold the results of the detection
-        HoughLinesP(frame_1, linesP, 10, CV_PI/180, 50, 50, 1 ); // runs the actual detection
-        for( size_t i = 0; i < linesP.size(); i++ )
-        {
-            Vec4i l = linesP[i];
-            line( cdstP, Point(l[0], l[1]), Point(l[2], l[3]), 255, 1, LINE_AA);
+        vector<Vec2f> lines; // will hold the results of the detection
+        HoughLines(frame_1, lines, 1, CV_PI/180, 200, 50, 0 ); // runs the actual detection
+        // Draw the lines
+
+        float rho_threshold = 60;
+        float theta_threshold = CV_PI/360*30;
+        vector<vector<int>> similar_lines;
+        // CV_PI/360*20
+        for(int i = 0; i < lines.size(); i++){
+            vector<int> temp {i, 1}; 
+            similar_lines.push_back(temp);
+            for(int j = i; j < lines.size(); j++){
+                if(i == j)
+                    continue; 
+                
+                if(abs(lines[i][0] - lines[j][0]) < rho_threshold && abs(lines[i][1] - lines[j][1]) < theta_threshold){
+                    similar_lines.back()[1]++;
+                }
+            }
+        }
+        
+        vector<bool> flags (similar_lines.size(), true); 
+        sort(similar_lines.begin(), similar_lines.end(), [](auto const& lhs, auto const& rhs) {
+            return lhs[1] > rhs[1];
+            });
+
+        vector<Vec2f> filtered_lines;
+        for(int i = 0; i < similar_lines.size(); i++){
+            if(!flags[i])
+                continue;
+            
+            float rho_avg = 0; 
+            float theta_avg = 0;
+            int similars = 0; 
+            for(int j = i+1; j < similar_lines.size(); j++){
+                if(!flags[j])
+                    continue;
+                
+                if(abs(lines[i][0] - lines[j][0]) < rho_threshold && abs(lines[i][1] - lines[j][1]) < theta_threshold){
+                    flags[j] = false; 
+                    rho_avg += lines[j][0];
+                    theta_avg += lines[j][1];
+                    similars++; 
+                }
+            }
+            filtered_lines.push_back(Vec2f(rho_avg/similars, theta_avg/similars));
+        }
+
+        
+        
+        cout << "Lines: " << lines.size() << endl;
+        cout << "After Filtering: " << filtered_lines.size() << endl;
+
+        for( size_t i = 0; i < filtered_lines.size(); i++ ){
+            float rho = filtered_lines[i][0], theta = filtered_lines[i][1];
+            Point pt1, pt2;
+            double a = cos(theta), b = sin(theta);
+            double x0 = a*rho, y0 = b*rho;
+            pt1.x = cvRound(x0 + 1000*(-b));
+            pt1.y = cvRound(y0 + 1000*(a));
+            pt2.x = cvRound(x0 - 1000*(-b));
+            pt2.y = cvRound(y0 - 1000*(a));
+            line( cdst, pt1, pt2, 255, 3, LINE_AA);
         }
    
         imshow("Original", frame_1);
         imshow("Res", cdst);
-        imshow("Inter", cdstP);
         // imshow("TD: ", depthmeter.pipeline.frame_laplacian);
         // imshow("Matches", matches_img);
         // imshow("Filtered Matches", filtered_matches_img);
