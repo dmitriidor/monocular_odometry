@@ -2,13 +2,14 @@
 #include <ctime>
 #include <numeric>
 
+#include <eigen3/Eigen/Dense>
+
 #include <opencv4/opencv2/opencv.hpp>
 #include <opencv4/opencv2/opencv_modules.hpp>
 #include <opencv4/opencv2/videoio.hpp>
 #include <opencv4/opencv2/features2d/features2d.hpp>
 #include <opencv4/opencv2/imgproc/imgproc.hpp>
-#include <opencv4/opencv2/core/eigen.hpp>
-#include <eigen3/Eigen/Dense>
+// #include <opencv4/opencv2/core/eigen.hpp>
 
 #include <opencv4/opencv2/cudafilters.hpp>
 #include <opencv4/opencv2/cudaimgproc.hpp>
@@ -23,11 +24,12 @@
 
 using namespace std;
 using namespace cv;
+using namespace Eigen; 
 
 int main(int, char**) {
 
 
-    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_1.avi");
+    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_3.avi");
 
     if(!cap.isOpened()){
         cout << "Error opening video stream or file" << endl;
@@ -36,7 +38,7 @@ int main(int, char**) {
 
 
     Mat frame_1, frame_2; 
-    cap.set(CAP_PROP_POS_MSEC, 0);
+    cap.set(CAP_PROP_POS_MSEC, 6000);
     cap >> frame_1;
 
     cuda::GpuMat gpu_frame_1;
@@ -48,25 +50,30 @@ int main(int, char**) {
 
     Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(7, 7), 1, 1);
     Ptr<cuda::Filter> laplace_filter = cuda::createLaplacianFilter(CV_16U, CV_16U, 1); 
-    cuda::SURF_CUDA surf(900, 4, 2, true);
+    // cuda::SURF_CUDA surf(1500, 4, 2, true);
+    Ptr<cuda::ORB> feature_extractor = cuda::ORB::create(100, 1.2f, 8, 40, 0, 2, 0, 50);
 
     vector<KeyPoint> keys_1, keys_2;
     cuda::GpuMat gpu_keys_1, gpu_keys_2;
 
-    vector<float> descriptors_1, descriptors_2; 
+    // vector<float> descriptors_1, descriptors_2; 
     cuda::GpuMat gpu_descriptors_1, gpu_descriptors_2; 
 
     gpu_frame_1 = gpu_frame_2; 
-    surf(gpu_frame_2, cuda::GpuMat(), gpu_keys_2, gpu_descriptors_2);
+    // surf(gpu_frame_2, cuda::GpuMat(), gpu_keys_2, gpu_descriptors_2);
+    feature_extractor->detectAndCompute(gpu_frame_2, noArray(), keys_2, gpu_descriptors_2);
 
-    Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_L1);
+    // Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_L2);
+    Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_HAMMING);
 
     clock_t start, end; 
-    for(int iter = 1; iter < 100+1; iter++) {
-        gpu_keys_1 = gpu_keys_2; 
+    for(int iter = 1; iter < 1000000+1; iter++) {
+        cap >> frame_2;
+
+        // gpu_keys_1 = gpu_keys_2; 
+        keys_1 = keys_2; 
         gpu_descriptors_1 = gpu_descriptors_2;
         gpu_frame_1 = gpu_frame_2; 
-        cap >> frame_2;
         
 
         gpu_frame_2.upload(frame_2); 
@@ -85,24 +92,22 @@ int main(int, char**) {
         cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
         gpu_frame_2.convertTo(gpu_frame_2, CV_8U, 1/pow(2, 8));
 
-        surf(gpu_frame_2, cuda::GpuMat(), gpu_keys_2, gpu_descriptors_2);
-
-        // vector< vector<DMatch> > matches; 
-        // matcher->knnMatch(gpu_descriptors_1, gpu_descriptors_2, matches, 2);
+        // surf(gpu_frame_2, cuda::GpuMat(), gpu_keys_2, gpu_descriptors_2);
+        feature_extractor->detectAndCompute(gpu_frame_2, noArray(), keys_2, gpu_descriptors_2);
 
         vector< vector<DMatch> > matches; 
         matcher->knnMatch(gpu_descriptors_1, gpu_descriptors_2, matches, 2);
 
         vector<DMatch> filtered_matches; 
-        float ratio = 0.001; 
+        double ratio = 0.1; 
         for(int i = 0; i < matches.size(); i++) {
             if(matches[i][0].distance < matches[i][1].distance*ratio) {
                 filtered_matches.push_back(matches[i][0]);
             }
         }
 
-        surf.downloadKeypoints(gpu_keys_1, keys_1);
-        surf.downloadKeypoints(gpu_keys_2, keys_2);
+        // surf.downloadKeypoints(gpu_keys_1, keys_1);
+        // surf.downloadKeypoints(gpu_keys_2, keys_2);
 
         vector<Point2f> filtered_points_1(filtered_matches.size(), Point2f(0, 0));
         vector<Point2f> filtered_points_2(filtered_matches.size(), Point2f(0, 0)); 
@@ -156,180 +161,45 @@ int main(int, char**) {
             points3d_2.at<float>(2, i) = 1; 
         }
 
-        // for(int i = 0; i < filtered_points_1.size(); i++)
-        //     cout << points3d_1 << "!!\n" << points3d_2 << endl;
+        Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> pnts3d_1_eigen(points3d_1.ptr<float>(), points3d_1.rows, points3d_1.cols);
+        Eigen::Map<Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> pnts3d_2_eigen(points3d_2.ptr<float>(), points3d_2.rows, points3d_2.cols);
 
         if(iter < 4)
             continue;
             
-        Mat H = Mat::zeros(Size(3, 3), CV_32F);
+        MatrixXf H = pnts3d_1_eigen * pnts3d_2_eigen.transpose(); 
 
-        H = points3d_1 * points3d_1.t();
+        cout << H << endl;
 
-        // cout << points3d_1 << endl; 
-        // cout << points3d_2 << endl; 
+        Eigen::JacobiSVD<Eigen::MatrixXf> svd(H, Eigen::ComputeFullV | Eigen::ComputeFullU);
 
-        Mat W = Mat::zeros(Size(3, 3), CV_32F);
-        Mat U = Mat::zeros(Size(3, 3), CV_32F);
-        Mat Vt = Mat::zeros(Size(3, 3), CV_32F);
-
-        SVD::compute(H, W, U, Vt, SVD::FULL_UV);
-
-        Mat R = Mat::zeros(Size(3, 3), CV_32F);
-        R = Vt * U.t();
+        Matrix3f R = svd.matrixV() * svd.matrixU().transpose(); 
 
         cout << R << endl;
 
-        if(determinant(R) < 0){
-            SVD::compute(R, W, U, Vt, SVD::FULL_UV);
-            for(int i = 0; i < Vt.rows; i++)
-                Vt.at<float>(i, 2) *= -1; 
-            R = Vt * U.t(); 
+        if(R.determinant() < 0) { 
+            Eigen::JacobiSVD<Eigen::MatrixXf> svd(R, Eigen::ComputeFullV | Eigen::ComputeFullU);
+            MatrixXf Vt = svd.matrixV(); 
+            Eigen::Vector3f M = Eigen::Vector3f(1, 1, -1);
+            Eigen::Matrix3Xf C = Vt.array().colwise() * M.array();
+            R =  Vt * svd.matrixU().transpose();
         }
 
-        Mat ang; 
-        Rodrigues(R, ang, noArray());
-        cout << determinant(R) <<"Angles: " << ang*360/CV_PI << "\n" << endl; 
+        Vector3f ang = R.eulerAngles(2, 1, 0); 
+        cout << ang*360/3.14 << endl; 
 
-        Mat t_vec = Mat::zeros(Size(1, 3), CV_32F);
+        Vector3f centroid_1_eigen;
+        centroid_1_eigen << centroid_1.x, centroid_1.y, 1; 
+        Vector3f centroid_2_eigen;
+        centroid_2_eigen << centroid_2.x, centroid_2.y, 1; 
 
-        Mat centroid_mat_1 = Mat::ones(Size(1, 3), CV_32F);
-        Mat centroid_mat_2 = Mat::ones(Size(1, 3), CV_32F);
-
-        centroid_mat_1.at<float>(0, 0) = centroid_1.x;
-        centroid_mat_1.at<float>(1, 0) = centroid_1.y;
-        centroid_mat_2.at<float>(0, 0) = centroid_2.x;
-        centroid_mat_2.at<float>(1, 0) = centroid_2.y;
-
-        t_vec = centroid_mat_2 - R*centroid_mat_1; 
-
-        // cout << centroid_mat_2 << "\n" << centroid_mat_1 << endl;
-
-        // cout << "Movement: " << t_vec << "\n" << endl;
-
-        // cout << "Transition: " << centroid_2.x - centroid_1.x << "::" << centroid_2.y - centroid_1.y << "\n" << endl;
-
-
-        // cout << centroid_mat_1 << endl; 
-
-        // Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
-        // Mat h_mat;
-        // vector<Mat> rot_mat, t_vec, normies; 
-        // Mat ang, norm_rot_mat;
-
-        // try {
-        //     std::vector<Point2f> obj;
-        //     std::vector<Point2f> scene;
-        //     for( size_t i = 0; i < filtered_matches.size(); i++ ) {
-        //         //-- Get the keypoints from the good matches
-        //         obj.push_back( keys_1[ filtered_matches[i].queryIdx ].pt );
-        //         scene.push_back( keys_2[ filtered_matches[i].trainIdx ].pt );
-        //     }
-        //     h_mat = findHomography( obj, scene, RANSAC , 0.01, noArray(), 5000, 0.999);
-        //     decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
-        //     norm_rot_mat = (Mat_<double>(3, 3) << rot_mat[0].at<double>(0,0), rot_mat[0].at<double>(1,0), rot_mat[0].at<double>(2,0),
-        //                                           rot_mat[0].at<double>(3,0), rot_mat[0].at<double>(4,0), rot_mat[0].at<double>(5,0),
-        //                                           rot_mat[0].at<double>(6,0), rot_mat[0].at<double>(7,0), rot_mat[0].at<double>(8,0));
-        //     Rodrigues(norm_rot_mat, ang, noArray());
-
-        //     cout << norm_rot_mat << endl;
-
-        //     cout << ang*360/CV_PI << endl; 
-
-        //     cout << endl; 
-        // }
-        // catch(...){
-        //     cout << "Problem!" << endl; 
-        // }
-
-        // decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
-
-        // Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
-        // Mat h_mat, rot_mat, t_vec; node + launch 
-
-        // h_mat = findHomography(filtered_points_1, filtered_points_2, RANSAC);
-
-        // decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, noArray()); 
-
-        // cout << rot_mat << endl; 
-        // cout << t_vec << endl; 
-
-        // vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
-        //                                     {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
-        //                                     {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
-            
-        // AngleConverter converter; 
-        // converter.SetAndConvertR(rotations);
-    
-
-        // vector<float> angles(3, 0);
-        // angles = converter.GetYawPitchRollSTD();
-
-        // for(int i = 0; i < angles.size(); i++)
-        //     cout << angles[i]*360/3.14 << " ! ";
-
-        // cout << endl; 
-
-        // try {                    
-        //     // e_mat = findEssentialMat(filtered_points_1, filtered_points_1, i_mat, RANSAC, 0.9, 0.1, 10000, noArray());
-
-        //     // cout << e_mat << "\n" << endl; 
- 
-        //     // recoverPose(e_mat, filtered_points_1, filtered_points_1, i_mat, rot_mat, t_vec);
-
-        //     // cout << rot_mat << "\n" << endl;
-
-        //     // cout << t_vec << endl; 
-
-        //     // cout << endl;
-        //     h_mat = cv::findHomography(filtered_points_1, filtered_points_2, RANSAC);
-
-        //     decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, noArray()); 
-
-        //     cout << rot_mat << endl; 
-        //     cout << t_vec << endl; 
-
-        //     vector< vector<float> > rotations  {{rot_mat.at<double>(0, 0), rot_mat.at<double>(0, 1), rot_mat.at<double>(0, 2),},
-        //                                         {rot_mat.at<double>(1, 0), rot_mat.at<double>(1, 1), rot_mat.at<double>(1, 2),},
-        //                                         {rot_mat.at<double>(2, 0), rot_mat.at<double>(2, 1), rot_mat.at<double>(2, 2),}};
-                
-        //     AngleConverter converter; 
-        //     converter.SetAndConvertR(rotations);
-        
-
-        //     vector<float> angles(3, 0);
-        //     angles = converter.GetYawPitchRollSTD();
-
-        //     for(int i = 0; i < angles.size(); i++)
-        //         cout << angles[i]*360/3.14 << " ! ";
-
-        //     cout << endl; 
-        // }
-        // catch(...) {
-        //     cout << "Oops!" << endl;
-        // }
-
-
-        // float val = Pi/360; 
-        // transform(yaw_pitch_roll.begin(), yaw_pitch_roll.end(), yaw_pitch_roll.begin(), [val](int &element){return element*val;});
-
-        // Mat matches_img; 
-        // vector<KeyPoint> keys_1, keys_2;
-
-        // detector->convert(gpu_keys_1, keys_1);
-        // detector->convert(gpu_keys_1, keys_2);
-
-        // Mat matches_img; 
-        // drawMatches(frame_1, keys_1, frame_2, keys_2, matches, matches_img);
+        Vector3f T = centroid_2_eigen - centroid_1_eigen;
 
         gpu_frame_1.download(frame_1);
         gpu_frame_2.download(frame_2);
 
         Mat filtered_matches_img; 
         drawMatches(frame_1, keys_1, frame_2, keys_2, filtered_matches, filtered_matches_img);
-        // Mat blurred_img;
-        // GaussianBlur(frame_1, blurred_img, cv::Size(0, 0), 3);
-        // addWeighted(frame_1, 1.5, blurred_img, -1, 0, blurred_img);
 
         Mat shit; 
         gpu_frame_filtered.download(shit); 
@@ -355,7 +225,3 @@ node:
 >> 3. calculate speed
 5. form message 
 */
-// pochette 19100 no 
-//petite boite 79k 2-14c weeks 
-//mini boite 35k emaar
-//souple 43500 brown 46k black 
