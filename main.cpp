@@ -7,6 +7,8 @@
 #include <opencv4/opencv2/videoio.hpp>
 #include <opencv4/opencv2/features2d/features2d.hpp>
 #include <opencv4/opencv2/imgproc/imgproc.hpp>
+#include <opencv4/opencv2/core/eigen.hpp>
+#include <eigen3/Eigen/Dense>
 
 #include <opencv4/opencv2/cudafilters.hpp>
 #include <opencv4/opencv2/cudaimgproc.hpp>
@@ -25,7 +27,7 @@ using namespace cv;
 int main(int, char**) {
 
 
-    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_4.avi");
+    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_1.avi");
 
     if(!cap.isOpened()){
         cout << "Error opening video stream or file" << endl;
@@ -46,7 +48,7 @@ int main(int, char**) {
 
     Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(7, 7), 1, 1);
     Ptr<cuda::Filter> laplace_filter = cuda::createLaplacianFilter(CV_16U, CV_16U, 1); 
-    cuda::SURF_CUDA surf(100, 4, 2, true);
+    cuda::SURF_CUDA surf(900, 4, 2, true);
 
     vector<KeyPoint> keys_1, keys_2;
     cuda::GpuMat gpu_keys_1, gpu_keys_2;
@@ -92,7 +94,7 @@ int main(int, char**) {
         matcher->knnMatch(gpu_descriptors_1, gpu_descriptors_2, matches, 2);
 
         vector<DMatch> filtered_matches; 
-        float ratio = 0.01; 
+        float ratio = 0.001; 
         for(int i = 0; i < matches.size(); i++) {
             if(matches[i][0].distance < matches[i][1].distance*ratio) {
                 filtered_matches.push_back(matches[i][0]);
@@ -102,36 +104,143 @@ int main(int, char**) {
         surf.downloadKeypoints(gpu_keys_1, keys_1);
         surf.downloadKeypoints(gpu_keys_2, keys_2);
 
-        // vector<Point2f> filtered_points_1(filtered_matches.size(), Point2f(0, 0));
-        // vector<Point2f> filtered_points_2(filtered_matches.size(), Point2f(0, 0)); 
-        // for(int i = 0; i < filtered_matches.size(); i++) {
-        //     filtered_points_1[i] = keys_1[filtered_matches[i].queryIdx].pt;
-        //     filtered_points_2[i] = keys_2[filtered_matches[i].trainIdx].pt;
-        // }
-        Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
-        Mat h_mat;
-        vector<Mat> rot_mat, t_vec, normies; 
-        Mat ang, norm_rot_mat;
+        vector<Point2f> filtered_points_1(filtered_matches.size(), Point2f(0, 0));
+        vector<Point2f> filtered_points_2(filtered_matches.size(), Point2f(0, 0)); 
+        for(int i = 0; i < filtered_matches.size(); i++) {
+            filtered_points_1[i] = keys_1[filtered_matches[i].queryIdx].pt;
+            filtered_points_2[i] = keys_2[filtered_matches[i].trainIdx].pt;
+        }
 
-        try {
-            std::vector<Point2f> obj;
-            std::vector<Point2f> scene;
-            for( size_t i = 0; i < filtered_matches.size(); i++ ) {
-                //-- Get the keypoints from the good matches
-                obj.push_back( keys_1[ filtered_matches[i].queryIdx ].pt );
-                scene.push_back( keys_2[ filtered_matches[i].trainIdx ].pt );
-            }
-            h_mat = findHomography( obj, scene, RANSAC , 0.01, noArray());
-            decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
-            norm_rot_mat = (Mat_<double>(3, 3) << rot_mat[0].at<double>(0,0), rot_mat[0].at<double>(1,0), rot_mat[0].at<double>(2,0),
-                                                  rot_mat[0].at<double>(3,0), rot_mat[0].at<double>(4,0), rot_mat[0].at<double>(5,0),
-                                                  rot_mat[0].at<double>(6,0), rot_mat[0].at<double>(7,0), rot_mat[0].at<double>(8,0));
-            Rodrigues(norm_rot_mat, ang, noArray());
-            cout << ang*360/CV_PI << endl; 
+        double sum_x, sum_y; 
+
+        sum_x = 0; 
+        sum_y = 0;
+        for(int i = 0; i < filtered_points_1.size(); i++){
+            sum_x += filtered_points_1[i].x;
+            sum_y += filtered_points_1[i].y;
         }
-        catch(...){
-            cout << "Problem!" << endl; 
+        Point2f centroid_1 =  Point2f(sum_x/filtered_points_1.size(), sum_y/filtered_points_1.size());
+
+
+        sum_x = 0; 
+        sum_y = 0;
+        for(int i = 0; i < filtered_points_2.size(); i++){
+            sum_x += filtered_points_2[i].x;
+            sum_y += filtered_points_2[i].y;
         }
+        Point2f centroid_2 =  Point2f(sum_x/filtered_points_2.size(), sum_y/filtered_points_2.size());
+
+        for(int i = 0; i < filtered_points_1.size(); i++){
+            filtered_points_1[i].x -= centroid_1.x;
+            filtered_points_1[i].y -= centroid_1.y;
+        }
+
+
+        for(int i = 0; i < filtered_points_2.size(); i++){
+            filtered_points_2[i].x -= centroid_2.x;
+            filtered_points_2[i].y -= centroid_2.y;
+        }
+
+        Mat points3d_1 = Mat::zeros(Size(filtered_points_1.size(), 3), CV_32F); 
+        Mat points3d_2 = Mat::zeros(Size(filtered_points_1.size(), 3), CV_32F); 
+
+        for(int i = 0; i < points3d_1.cols; i++){
+            points3d_1.at<float>(0, i) = filtered_points_1[i].x;
+            points3d_1.at<float>(1, i) = filtered_points_1[i].y;
+            points3d_1.at<float>(2, i) = 1; 
+        }
+
+        for(int i = 0; i < points3d_2.cols; i++){
+            points3d_2.at<float>(0, i) = filtered_points_2[i].x;
+            points3d_2.at<float>(1, i) = filtered_points_2[i].y;
+            points3d_2.at<float>(2, i) = 1; 
+        }
+
+        // for(int i = 0; i < filtered_points_1.size(); i++)
+        //     cout << points3d_1 << "!!\n" << points3d_2 << endl;
+
+        if(iter < 4)
+            continue;
+            
+        Mat H = Mat::zeros(Size(3, 3), CV_32F);
+
+        H = points3d_1 * points3d_1.t();
+
+        // cout << points3d_1 << endl; 
+        // cout << points3d_2 << endl; 
+
+        Mat W = Mat::zeros(Size(3, 3), CV_32F);
+        Mat U = Mat::zeros(Size(3, 3), CV_32F);
+        Mat Vt = Mat::zeros(Size(3, 3), CV_32F);
+
+        SVD::compute(H, W, U, Vt, SVD::FULL_UV);
+
+        Mat R = Mat::zeros(Size(3, 3), CV_32F);
+        R = Vt * U.t();
+
+        cout << R << endl;
+
+        if(determinant(R) < 0){
+            SVD::compute(R, W, U, Vt, SVD::FULL_UV);
+            for(int i = 0; i < Vt.rows; i++)
+                Vt.at<float>(i, 2) *= -1; 
+            R = Vt * U.t(); 
+        }
+
+        Mat ang; 
+        Rodrigues(R, ang, noArray());
+        cout << determinant(R) <<"Angles: " << ang*360/CV_PI << "\n" << endl; 
+
+        Mat t_vec = Mat::zeros(Size(1, 3), CV_32F);
+
+        Mat centroid_mat_1 = Mat::ones(Size(1, 3), CV_32F);
+        Mat centroid_mat_2 = Mat::ones(Size(1, 3), CV_32F);
+
+        centroid_mat_1.at<float>(0, 0) = centroid_1.x;
+        centroid_mat_1.at<float>(1, 0) = centroid_1.y;
+        centroid_mat_2.at<float>(0, 0) = centroid_2.x;
+        centroid_mat_2.at<float>(1, 0) = centroid_2.y;
+
+        t_vec = centroid_mat_2 - R*centroid_mat_1; 
+
+        // cout << centroid_mat_2 << "\n" << centroid_mat_1 << endl;
+
+        // cout << "Movement: " << t_vec << "\n" << endl;
+
+        // cout << "Transition: " << centroid_2.x - centroid_1.x << "::" << centroid_2.y - centroid_1.y << "\n" << endl;
+
+
+        // cout << centroid_mat_1 << endl; 
+
+        // Mat i_mat = (Mat_<double>(3,3) << 73, 0, 400, 0, 73, 400, 0, 0, 1);
+        // Mat h_mat;
+        // vector<Mat> rot_mat, t_vec, normies; 
+        // Mat ang, norm_rot_mat;
+
+        // try {
+        //     std::vector<Point2f> obj;
+        //     std::vector<Point2f> scene;
+        //     for( size_t i = 0; i < filtered_matches.size(); i++ ) {
+        //         //-- Get the keypoints from the good matches
+        //         obj.push_back( keys_1[ filtered_matches[i].queryIdx ].pt );
+        //         scene.push_back( keys_2[ filtered_matches[i].trainIdx ].pt );
+        //     }
+        //     h_mat = findHomography( obj, scene, RANSAC , 0.01, noArray(), 5000, 0.999);
+        //     decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
+        //     norm_rot_mat = (Mat_<double>(3, 3) << rot_mat[0].at<double>(0,0), rot_mat[0].at<double>(1,0), rot_mat[0].at<double>(2,0),
+        //                                           rot_mat[0].at<double>(3,0), rot_mat[0].at<double>(4,0), rot_mat[0].at<double>(5,0),
+        //                                           rot_mat[0].at<double>(6,0), rot_mat[0].at<double>(7,0), rot_mat[0].at<double>(8,0));
+        //     Rodrigues(norm_rot_mat, ang, noArray());
+
+        //     cout << norm_rot_mat << endl;
+
+        //     cout << ang*360/CV_PI << endl; 
+
+        //     cout << endl; 
+        // }
+        // catch(...){
+        //     cout << "Problem!" << endl; 
+        // }
 
         // decomposeHomographyMat(h_mat, i_mat, rot_mat, t_vec, normies); 
 
