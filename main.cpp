@@ -50,9 +50,7 @@ static void drawArrows(Mat& frame, const vector<Point2f>& prevPts, const vector<
         {
             int line_thickness = 1;
             Point p = prevPts[i];
-            cout << p << endl;
             Point q = nextPts[i];
-            cout << q << "\n" << endl; 
             double angle = atan2((double) p.y - q.y, (double) p.x - q.x);
             double hypotenuse = sqrt( (double)(p.y - q.y)*(p.y - q.y) + (double)(p.x - q.x)*(p.x - q.x) );
             if (hypotenuse < 1.0)
@@ -106,13 +104,20 @@ int main(int, char**) {
     int loops = 100; 
     Ptr<cuda::SparsePyrLKOpticalFlow> flow = cuda::SparsePyrLKOpticalFlow::create(Size(21, 21), 3, loops);
 
+    Rect region(50, 50, 300, 300);
+    cuda::GpuMat gpu_matching_region_1, gpu_matching_region_2;
+
+    Mat matched_frame_1, matched_frame_2; 
+
     gpu_frame_2.convertTo(gpu_frame_2, CV_16U, 1/pow(2, 8));
-    detector->detect(gpu_frame_2, gpu_corners_2);
+    gpu_matching_region_2 = gpu_frame_2(region);
+    detector->detect(gpu_matching_region_2, gpu_corners_2);
 
     cuda::GpuMat gpu_status, gpu_error; 
 
     for(int iter = 1; iter < 100+1; iter++) {
 
+        gpu_matching_region_1 = gpu_matching_region_2; 
         gpu_corners_1 = gpu_corners_2; 
         gpu_frame_1 = gpu_frame_2; 
         cap >> frame_2;
@@ -131,9 +136,12 @@ int main(int, char**) {
         cuda::normalize(gpu_frame_2, gpu_frame_2, 0, pow(2, 16), NORM_MINMAX, CV_16U);
         // cuda::subtract(gpu_frame_2, gpu_frame_filtered, gpu_frame_2);
         // cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
+        gpu_matching_region_2 = gpu_frame_2(region);
         
-        if(iter%1 == 0)
-            detector->detect(gpu_frame_1, gpu_corners_1);
+        if(iter%10 == 0)
+            detector->detect(gpu_matching_region_2, gpu_corners_1);
+
+        flow->calc(gpu_matching_region_1, gpu_matching_region_2, gpu_corners_1, gpu_corners_2, gpu_status, gpu_error); 
 
         gpu_frame_1.download(frame_1);
         gpu_frame_2.download(frame_2);
@@ -141,40 +149,43 @@ int main(int, char**) {
         gpu_corners_1.download(corners_1);
         gpu_corners_2.download(corners_2);
 
-        flow->calc(gpu_frame_1, gpu_frame_2, gpu_corners_1, gpu_corners_2, gpu_status, gpu_error); 
+        gpu_matching_region_1.download(matched_frame_1);
+        gpu_matching_region_2.download(matched_frame_2);
 
-        // Mat filtered_matches_img; 
-        // drawMatches(frame_1, keys_1, frame_2, keys_2, filtered_matches, filtered_matches_img);
-        // for(int i = 0; i < corners_1.cols; i++) {
-        //     Point2f center_1 = corners_1.at<Point2f>(0, i);
-        //     circle(frame_1, center_1, 5, 0, 2, 8);
-        // }
+        vector<uchar> status(gpu_status.cols);
+        download(gpu_status, status);
+        Mat good_new;
+
+        for(int i = 0; i < corners_1.rows; i++)
+        {
+            if(status[i] == 1) {
+                good_new.push_back(corners_2.at<float>(i, 0));
+                good_new.push_back(corners_2.at<float>(i, 1));
+                // cout << corners_2.at<float>(i, 1) << endl;
+            }
+        }
+
+        cout << good_new << endl;
+        // corners_2 = good_new; 
+
+        // cout << corners_1 << endl; 
 
         for(int i = 0; i < corners_1.cols; i++) {
             Point2f center_1 = corners_1.at<Point2f>(0, i);
-            circle(frame_1, center_1, 5, 0, 2, 8);
+            circle(matched_frame_1, center_1, 5, 0, 2, 8);
         }
 
         for(int i = 0; i < corners_2.cols; i++) {
             Point2f center_2 = corners_2.at<Point2f>(0, i);
-            circle(frame_2, center_2, 5, 0, 2, 8);
+            circle(matched_frame_2, center_2, 5, 100, 2, 8);
         }
 
-        vector<uchar> status(gpu_status.cols);
-        download(gpu_status, status);
-        drawArrows(frame_1, corners_1, corners_2, status, Scalar(255, 0, 0));
+        drawArrows(frame_1, corners_1, corners_2, status, 255);
         imshow("PyrLK [Sparse]", frame_1);
-        // vector<float> err;
-        // download(gpu_error, err);
-        // for(int i = 0; i < status.size(); i++)
-        //     cout << err[i] << endl;
 
 
-        imshow("Frame 1", frame_1);
-        imshow("Frame 2", frame_2);
-        // imshow("TD: ", depthmeter.pipeline.frame_laplacian);
-        // imshow("Matches", matches_img);
-        // imshow("Filtered Matches", filtered_matches_img);
+        imshow("Frame 1", matched_frame_1);
+        imshow("Frame 2", matched_frame_2);
         waitKey(0);
     }
 };
