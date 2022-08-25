@@ -29,7 +29,7 @@ using namespace Eigen;
 int main(int, char**) {
 
 
-    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_3.avi");
+    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_3_cut.mp4");
 
     if(!cap.isOpened()){
         cout << "Error opening video stream or file" << endl;
@@ -51,7 +51,7 @@ int main(int, char**) {
     Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(7, 7), 1, 1);
     Ptr<cuda::Filter> laplace_filter = cuda::createLaplacianFilter(CV_16U, CV_16U, 1); 
     // cuda::SURF_CUDA surf(1500, 4, 2, true);
-    Ptr<cuda::ORB> feature_extractor = cuda::ORB::create(100, 1.2f, 8, 40, 0, 2, 0, 50);
+    Ptr<cuda::ORB> feature_extractor = cuda::ORB::create(30, 1.2f, 8, 31, 0, 2, 0, 20);
 
     vector<KeyPoint> keys_1, keys_2;
     cuda::GpuMat gpu_keys_1, gpu_keys_2;
@@ -59,18 +59,25 @@ int main(int, char**) {
     // vector<float> descriptors_1, descriptors_2; 
     cuda::GpuMat gpu_descriptors_1, gpu_descriptors_2; 
 
+    cuda::GpuMat gpu_matching_region_1; 
+    cuda::GpuMat gpu_matching_region_2; 
+    Rect region (0, 0, 250, 260);
+
     gpu_frame_1 = gpu_frame_2; 
+    gpu_matching_region_2 = gpu_frame_2(region);
     // surf(gpu_frame_2, cuda::GpuMat(), gpu_keys_2, gpu_descriptors_2);
-    feature_extractor->detectAndCompute(gpu_frame_2, noArray(), keys_2, gpu_descriptors_2);
+    feature_extractor->detectAndCompute(gpu_matching_region_2, noArray(), keys_2, gpu_descriptors_2);
 
     // Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_L2);
     Ptr<cuda::DescriptorMatcher> matcher = cuda::DescriptorMatcher::createBFMatcher(NORM_HAMMING);
+
 
     clock_t start, end; 
     for(int iter = 1; iter < 1000000+1; iter++) {
         cap >> frame_2;
 
         // gpu_keys_1 = gpu_keys_2; 
+        gpu_matching_region_1 = gpu_matching_region_2;
         keys_1 = keys_2; 
         gpu_descriptors_1 = gpu_descriptors_2;
         gpu_frame_1 = gpu_frame_2; 
@@ -90,10 +97,12 @@ int main(int, char**) {
         cuda::normalize(gpu_frame_2, gpu_frame_2, 0, pow(2, 16), NORM_MINMAX, CV_16U);
         cuda::subtract(gpu_frame_2, gpu_frame_filtered, gpu_frame_2);
         cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
-        gpu_frame_2.convertTo(gpu_frame_2, CV_8U, 1/pow(2, 8));
+        gpu_frame_2.convertTo(gpu_frame_2, CV_8U, 1/pow(2, 8)); 
+
+        gpu_matching_region_2 = gpu_frame_2(region); 
 
         // surf(gpu_frame_2, cuda::GpuMat(), gpu_keys_2, gpu_descriptors_2);
-        feature_extractor->detectAndCompute(gpu_frame_2, noArray(), keys_2, gpu_descriptors_2);
+        feature_extractor->detectAndCompute(gpu_matching_region_2, noArray(), keys_2, gpu_descriptors_2);
 
         vector< vector<DMatch> > matches; 
         matcher->knnMatch(gpu_descriptors_1, gpu_descriptors_2, matches, 2);
@@ -175,8 +184,6 @@ int main(int, char**) {
 
         Matrix3f R = svd.matrixV() * svd.matrixU().transpose(); 
 
-        cout << R << endl;
-
         if(R.determinant() < 0) { 
             Eigen::JacobiSVD<Eigen::MatrixXf> svd(R, Eigen::ComputeFullV | Eigen::ComputeFullU);
             MatrixXf Vt = svd.matrixV(); 
@@ -186,7 +193,7 @@ int main(int, char**) {
         }
 
         Vector3f ang = R.eulerAngles(2, 1, 0); 
-        cout << ang*360/3.14 << endl; 
+        cout << "Angles: \n" << ang*360/3.14 << endl; 
 
         Vector3f centroid_1_eigen;
         centroid_1_eigen << centroid_1.x, centroid_1.y, 1; 
