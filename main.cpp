@@ -59,14 +59,13 @@ int main(int, char**) {
 
     // vector<float> descriptors_1, descriptors_2; 
     cuda::GpuMat gpu_descriptors_1, gpu_descriptors_2; 
+    gpu_frame_2.convertTo(gpu_frame_2, CV_32FC1);
+    cuda::normalize(gpu_frame_2, gpu_frame_2, 0, 1, NORM_MINMAX, CV_32FC1);
 
     gpu_frame_1 = gpu_frame_2; 
 
-    Ptr<cuda::TemplateMatching> matcher = cuda::createTemplateMatching(CV_8U, TM_CCOEFF, Size(0, 0));
 
-    cuda::GpuMat gpu_matching_results; 
-    Mat matching_results;
-
+    float angle = 0; 
     clock_t start, end; 
     for(int iter = 1; iter < 1000000+1; iter++) {
         // cap.set(CAP_PROP_POS_MSEC, 1*iter);
@@ -90,33 +89,35 @@ int main(int, char**) {
         gpu_frame_2.convertTo(gpu_frame_2, CV_16U);
         cuda::normalize(gpu_frame_2, gpu_frame_2, 0, pow(2, 16), NORM_MINMAX, CV_16U);
         cuda::subtract(gpu_frame_2, gpu_frame_filtered, gpu_frame_2);
-        cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
-        gpu_frame_2.convertTo(gpu_frame_2, CV_8U, 1/pow(2, 8));
+        gpu_frame_2.convertTo(gpu_frame_2, CV_32FC1);
+        cuda::normalize(gpu_frame_2, gpu_frame_2, 0, 1, NORM_MINMAX, CV_32FC1);
 
-        Rect region(50, 50, 400, 400);
-        cuda::GpuMat gpu_matching_region = gpu_frame_1(region); 
-        
-        matcher->match(gpu_frame_2, gpu_matching_region, gpu_matching_results); 
-
-        gpu_matching_results.download(matching_results); 
-
-        double minVal, maxVal;
-        Point minLoc, maxLoc;
-        minMaxLoc(matching_results, &minVal, &maxVal, &minLoc, &maxLoc, Mat());
-
-        Mat matching_region;
         gpu_frame_1.download(frame_1);
         gpu_frame_2.download(frame_2);
-        gpu_matching_region.download(matching_region);
+        Mat framess_1 = frame_1;
+        Mat framess_2 = frame_2; 
 
-        cout << "dx:" << maxLoc.x - 50 << " dy:" << maxLoc.y - 50 << endl;
+        // double minVal, maxVal;
+        // Point2i minLoc, maxLoc;
+        // minMaxLoc(frame_1, &minVal, &maxVal, &minLoc, &maxLoc);
+        // frame_1.convertTo(frame_1, CV_32FC1, 65535.0/(maxVal-minVal),-65535.0*minVal/(maxVal-minVal)); 
+        // minMaxLoc(frame_2, &minVal, &maxVal, &minLoc, &maxLoc);
+        // frame_2.convertTo(frame_2, CV_32FC1, 65535.0/(maxVal-minVal),-65535.0*minVal/(maxVal-minVal)); 
 
-        rectangle( frame_2, maxLoc, Point( maxLoc.x + matching_region.cols , maxLoc.y + matching_region.rows ), Scalar::all(0), 2, 8, 0 );
-        rectangle(frame_2, region, Scalar::all(0), 2, 8, 0 );
-        rectangle(frame_1, region, Scalar::all(0), 2, 8, 0 );
-        imshow("Original", frame_1);
-        imshow("Res", frame_2);
-        imshow("Region", matching_region);
+        float min_x = frame_1.cols/2; 
+        float min_y = frame_1.rows/2;
+        linearPolar(frame_1, frame_1, Point2f(min_x, min_y), min((int)min_x, (int)min_y), INTER_NEAREST);
+        linearPolar(frame_2, frame_2, Point2f(min_x, min_y), min((int)min_x, (int)min_y), INTER_NEAREST);
+
+        Point2d shift = phaseCorrelate(frame_2, frame_1); 
+
+        angle += -shift.y/min_x * 360; 
+        cout << "shift: " << -shift.y/min_y * 360 << endl;
+        cout << "angle: " << angle << "\n" << endl; 
+
+        imshow("1st", framess_1);
+        imshow("2nd", framess_2);
+
         waitKey(0);
     }
 };
