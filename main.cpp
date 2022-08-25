@@ -30,57 +30,14 @@
 using namespace std;
 using namespace cv;
 
-static void download(const cuda::GpuMat& d_mat, vector<Point2f>& vec)
-{
-    vec.resize(d_mat.cols);
-    Mat mat(1, d_mat.cols, CV_32FC2, (void*)&vec[0]);
-    d_mat.download(mat);
-}
-static void download(const cuda::GpuMat& d_mat, vector<uchar>& vec)
-{
-    vec.resize(d_mat.cols);
-    Mat mat(1, d_mat.cols, CV_8U, (void*)&vec[0]);
-    d_mat.download(mat);
-}
-static void drawArrows(Mat& frame, const vector<Point2f>& prevPts, const vector<Point2f>& nextPts, const vector<uchar>& status, Scalar line_color = Scalar(0, 0, 255))
-{
-    for (size_t i = 0; i < prevPts.size(); ++i)
-    {
-        if (status[i])
-        {
-            int line_thickness = 1;
-            Point p = prevPts[i];
-            Point q = nextPts[i];
-            double angle = atan2((double) p.y - q.y, (double) p.x - q.x);
-            double hypotenuse = sqrt( (double)(p.y - q.y)*(p.y - q.y) + (double)(p.x - q.x)*(p.x - q.x) );
-            if (hypotenuse < 1.0)
-                continue;
-            q.x = (int) (p.x - 3 * hypotenuse * cos(angle));
-            q.y = (int) (p.y - 3 * hypotenuse * sin(angle));
-            // Now we draw the main line of the arrow.
-            line(frame, p, q, line_color, line_thickness);
-            // Now draw the tips of the arrow. I do some scaling so that the
-            // tips look proportional to the main line of the arrow.
-            p.x = (int) (q.x + 9 * cos(angle + CV_PI / 4));
-            p.y = (int) (q.y + 9 * sin(angle + CV_PI / 4));
-            line(frame, p, q, line_color, line_thickness);
-            p.x = (int) (q.x + 9 * cos(angle - CV_PI / 4));
-            p.y = (int) (q.y + 9 * sin(angle - CV_PI / 4));
-            line(frame, p, q, line_color, line_thickness);
-        }
-    }
-}
-
 int main(int, char**) {
 
-
-    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_2.avi");
+    VideoCapture cap("/home/dmitrii/Downloads/vids/archive/pool_test_3_cut.mp4");
 
     if(!cap.isOpened()){
         cout << "Error opening video stream or file" << endl;
         return -1;
     }
-
 
     Mat frame_1, frame_2; 
     cap.set(CAP_PROP_POS_MSEC, 1000);
@@ -88,7 +45,7 @@ int main(int, char**) {
 
     cuda::GpuMat gpu_frame_1;
     cuda::GpuMat gpu_frame_2; 
-    cuda::GpuMat gpu_frame_filtered;
+    cuda::GpuMat gpu_frame_flow;
 
     gpu_frame_2.upload(frame_1);
     cuda::cvtColor(gpu_frame_2, gpu_frame_2, COLOR_BGR2GRAY);
@@ -96,29 +53,22 @@ int main(int, char**) {
     Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(CV_16U, CV_16U, Size(5, 5), 1, 1);
     Ptr<cuda::Filter> laplace_filter = cuda::createLaplacianFilter(CV_16U, CV_16U, 1); 
 
-    Mat corners_1, corners_2; 
-    cuda::GpuMat gpu_corners_1, gpu_corners_2; 
-    Ptr<cuda::CornersDetector> detector= cuda::createGoodFeaturesToTrackDetector(CV_16U, 100, 0.1, 10, 5, false);
-
     TermCriteria criteria = TermCriteria((TermCriteria::COUNT) + (TermCriteria::EPS), 10, 0.03);
     int loops = 100; 
-    Ptr<cuda::SparsePyrLKOpticalFlow> flow = cuda::SparsePyrLKOpticalFlow::create(Size(21, 21), 3, loops);
+    Ptr<cuda::FarnebackOpticalFlow> flow = cuda::FarnebackOpticalFlow::create(5, 0.5, false);
 
     Rect region(50, 50, 300, 300);
     cuda::GpuMat gpu_matching_region_1, gpu_matching_region_2;
-
-    Mat matched_frame_1, matched_frame_2; 
+    Mat frame_flow, matched_frame_1, matched_frame_2; 
 
     gpu_frame_2.convertTo(gpu_frame_2, CV_16U, 1/pow(2, 8));
     gpu_matching_region_2 = gpu_frame_2(region);
-    detector->detect(gpu_matching_region_2, gpu_corners_2);
 
     cuda::GpuMat gpu_status, gpu_error; 
 
-    for(int iter = 1; iter < 100+1; iter++) {
+    for(int iter = 1; iter < 10000+1; iter++) {
 
         gpu_matching_region_1 = gpu_matching_region_2; 
-        gpu_corners_1 = gpu_corners_2; 
         gpu_frame_1 = gpu_frame_2; 
         cap >> frame_2;
 
@@ -138,52 +88,33 @@ int main(int, char**) {
         // cuda::minMax(gpu_frame_2, &minimum_value, &maximum_value); 
         gpu_matching_region_2 = gpu_frame_2(region);
         
-        if(iter%10 == 0)
-            detector->detect(gpu_matching_region_2, gpu_corners_1);
 
-        flow->calc(gpu_matching_region_1, gpu_matching_region_2, gpu_corners_1, gpu_corners_2, gpu_status, gpu_error); 
+        flow->calc(gpu_matching_region_1, gpu_matching_region_2, gpu_frame_flow); 
 
         gpu_frame_1.download(frame_1);
         gpu_frame_2.download(frame_2);
 
-        gpu_corners_1.download(corners_1);
-        gpu_corners_2.download(corners_2);
-
         gpu_matching_region_1.download(matched_frame_1);
         gpu_matching_region_2.download(matched_frame_2);
 
-        vector<uchar> status(gpu_status.cols);
-        download(gpu_status, status);
-        Mat good_new;
+        gpu_frame_flow.download(frame_flow); 
 
-        for(int i = 0; i < corners_1.rows; i++)
-        {
-            if(status[i] == 1) {
-                good_new.push_back(corners_2.at<float>(i, 0));
-                good_new.push_back(corners_2.at<float>(i, 1));
-                // cout << corners_2.at<float>(i, 1) << endl;
-            }
-        }
+        Mat flow_parts[2];
+        split(frame_flow, flow_parts);
+        Mat magnitude, angle, magn_norm;
+        cartToPolar(flow_parts[0], flow_parts[1], magnitude, angle, true);
+        normalize(magnitude, magn_norm, 0.0f, 1.0f, NORM_MINMAX);
+        angle *= ((1.f / 360.f) * (180.f / 255.f));
 
-        cout << good_new << endl;
-        // corners_2 = good_new; 
+        Mat _hsv[3], hsv, hsv8, bgr;
+        _hsv[0] = angle;
+        _hsv[1] = Mat::ones(angle.size(), CV_32F);
+        _hsv[2] = magn_norm;
+        merge(_hsv, 3, hsv);
+        hsv.convertTo(hsv8, CV_8U, 255.0);
+        cvtColor(hsv8, bgr, COLOR_HSV2BGR);
 
-        // cout << corners_1 << endl; 
-
-        for(int i = 0; i < corners_1.cols; i++) {
-            Point2f center_1 = corners_1.at<Point2f>(0, i);
-            circle(matched_frame_1, center_1, 5, 0, 2, 8);
-        }
-
-        for(int i = 0; i < corners_2.cols; i++) {
-            Point2f center_2 = corners_2.at<Point2f>(0, i);
-            circle(matched_frame_2, center_2, 5, 100, 2, 8);
-        }
-
-        drawArrows(frame_1, corners_1, corners_2, status, 255);
-        imshow("PyrLK [Sparse]", frame_1);
-
-
+        imshow("Dense", bgr);
         imshow("Frame 1", matched_frame_1);
         imshow("Frame 2", matched_frame_2);
         waitKey(0);
