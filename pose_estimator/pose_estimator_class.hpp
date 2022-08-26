@@ -1,77 +1,82 @@
 #ifndef POSE_ESTIMATOR_CLASS_H
 #define POSE_ESTIMATOR_CLASS_H
 
+#include <iostream>
+#include <ctime>
+#include <numeric>
+
+#include <eigen3/Eigen/Dense>
+
 #include <opencv4/opencv2/opencv.hpp>
 #include <opencv4/opencv2/opencv_modules.hpp>
 #include <opencv4/opencv2/videoio.hpp>
 #include <opencv4/opencv2/features2d/features2d.hpp>
 #include <opencv4/opencv2/imgproc/imgproc.hpp>
+// #include <opencv4/opencv2/core/eigen.hpp>
 
 #include <opencv4/opencv2/cudafilters.hpp>
 #include <opencv4/opencv2/cudaimgproc.hpp>
 #include <opencv4/opencv2/cudafeatures2d.hpp>
 #include <opencv4/opencv2/core/cuda.hpp>
-
+#include <opencv4/opencv2/cudaarithm.hpp>
+#include <opencv4/opencv2/xfeatures2d/cuda.hpp>
 
 using namespace cv;
-
+using namespace std; 
+using namespace Eigen; 
 class PoseEstimator{
     public:
-    PoseEstimator(); 
-    // void SetFilterParams(int sample_size, int cycles, float thrshld, int min_inliers);
-    // void SetPreprocessingParams(Size kernel, int laplace_krnl, int bin_thrshld, float thrshld_1, float thrshld_2);
-    // void SetFrame(Mat new_frame); 
+    PoseEstimator() = default; 
+    void SetPrevFrame(Mat frame); 
+    void SetNextFrame(Mat frame); 
+    void SetGaussParams(int stype, int dtype, Size k, float s_x, float s_y);
+    void SetLaplaceParams(int stype, int dtype, int k); 
+    Mat GetProcessedFrame(); 
+    vector<double> GetYPR();
+    vector<double> GetQ();
+    vector<double> GetT();
+    bool CalculateMotion(); 
 
-    // void PreprocessImage();
-    // float CalcVelocities(); 
+    private:
+    void SharpenImage();
 
-    // struct FramePipeline { 
-    //     Mat frame_raw; 
-    //     Mat frame_blurred_1;
-    //     Mat frame_gray; 
-    //     Mat frame_laplacian; 
-    //     Mat frame_blurred_2; 
-    //     Mat frame_bin; 
-    //     Mat frame_edges; 
-    // };
-    // FramePipeline pipeline;
+    void Convert3D(); 
+    void CalcNextCentroid(); 
+    void CenterSet(); 
+    void ExtractRotation();
+    void CheckRCase(); 
+    void Convert2YPR(); 
+    void Convert2Q(); 
+    void CalculateTranslation(); 
+    void CycleData(); 
+
+    Mat frame_prev, frame_next; 
+    cuda::GpuMat gpu_frame_prev, gpu_frame_next, gpu_frame_mask;
     
-    // private:
-    // void DetectFAST(); 
-    // void ExtractBEBLID(); 
-    // void FilterRatio();
-    // void CalcRelPose();
-    // void CalcSpeeds();  
+    struct Gaussian{
+        int src_type = CV_8U; 
+        int dst_type = CV_8U;
+        Size ksize = Size(7, 7);
+        float sigma_x = 1;
+        float sigma_y = 1; 
+    };
+    Gaussian pGau; 
 
-    // Mat crnt_frame, prev_frame; 
+    struct Laplace{
+        int src_type = CV_8U; 
+        int dst_type = CV_8U;
+        int ksize = 1; 
+    };
+    Laplace pLap; 
 
-    // Ptr<FastFeatureDetector> detector = FastFeatureDetector::create(10, true);
-    // vector<KeyPoint> crnt_keys, prev_keys;
+    Ptr<cuda::Filter> gaussian_filter = cuda::createGaussianFilter(pGau.src_type, pGau.dst_type, pGau.ksize, pGau.sigma_x, pGau.sigma_y);
+    Ptr<cuda::Filter> laplacian_filter = cuda::createLaplacianFilter(pLap.src_type, pLap.dst_type, pLap.ksize); 
 
-    // Ptr<Feature2D> extractor = xfeatures2d::BEBLID::create(0.75);
-    // Mat crnt_descriptors, prev_descriptors; 
-
-    // BFMatcher matcher;
-    // vector<vector<DMatch>> matches;
-
-    // vector<DMatch> matches_1, matches_2;
-    // vector<DMatch> filtered_matches;
-
-    // vector<Point2f> crnt_matched, prev_matched;
-
-    // Mat E, R, T;
-
-    // struct PreprocessingParams {
-    //     Size gaussian_kernel;
-    //     int bin_threshold;
-    //     int laplacian_kernel;
-    //     int canny_threshold_1;
-    //     int canny_threshold_2;
-    // };
-    // PreprocessingParams pp_vals; 
-
-    // float ratio_filter_thresh_ = 0.8; 
-    // float scale_factor_ = 0; 
+    MatrixXd points3d_prev, points3d_next; 
+    Vector3d centroid_prev, centroid_next;
+    Matrix3d H, R;
+    Vector3d YPR, T; 
+    Quaterniond Q; 
 };
 
 
