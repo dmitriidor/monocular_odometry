@@ -1,25 +1,14 @@
 #ifndef POSE_ESTIMATOR_CLASS_H
 #define POSE_ESTIMATOR_CLASS_H
 
-#include <iostream>
-#include <ctime>
 #include <numeric>
-
 #include <eigen3/Eigen/Dense>
-
-#include <opencv4/opencv2/opencv.hpp>
-#include <opencv4/opencv2/opencv_modules.hpp>
-#include <opencv4/opencv2/videoio.hpp>
-#include <opencv4/opencv2/features2d/features2d.hpp>
-#include <opencv4/opencv2/imgproc/imgproc.hpp>
-// #include <opencv4/opencv2/core/eigen.hpp>
 
 #include <opencv4/opencv2/cudafilters.hpp>
 #include <opencv4/opencv2/cudaimgproc.hpp>
 #include <opencv4/opencv2/cudafeatures2d.hpp>
 #include <opencv4/opencv2/core/cuda.hpp>
 #include <opencv4/opencv2/cudaarithm.hpp>
-#include <opencv4/opencv2/xfeatures2d/cuda.hpp>
 
 using namespace cv;
 using namespace std; 
