@@ -113,9 +113,18 @@ int main(int, char**) {
     MatrixXd deltas_filtered; 
     float max_distance = 1; 
 
+    PoseEstimator estimator; 
+    estimator.SetPrevFrame(frame_1); 
+
     clock_t start, end; 
     for(int iter = 1; iter < 1000000+1; iter++) {
         cap >> frame_2;
+
+        estimator.SetNextFrame(frame_2);
+        if(estimator.CalculateMotion())
+            cout << "Hmmm: " << estimator.GetYPR()[0] << endl;
+        else
+            cout << "Doh!" << endl; 
 
         gpu_frame_1 = gpu_frame_2; 
 
@@ -284,8 +293,9 @@ int main(int, char**) {
             cout << "Angle "<< i << ": " << ang[i] << endl; 
         cout << "Total angle: " << tang << endl; 
 
-        Vector3d T = centroid_2 - centroid_1;
+        Vector3d T = centroid_2 - R*centroid_1;
         cout << "Translation: " << T << endl; 
+
 
         // Vector3f centroid_1_eigen;
         // centroid_1_eigen << centroid_1.x, centroid_1.y, 1;
