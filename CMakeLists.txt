@@ -8,13 +8,9 @@ find_package(Eigen3 REQUIRED)
 include_directories(${Eigen3_INCLUDE_DIRS})
 
 add_subdirectory(pose_estimator)
-add_subdirectory(tile_depthmeter)
-add_subdirectory(angle_converter)
 
 add_executable(main main.cpp)
 target_link_libraries(main
     ${OpenCV_LIBS} 
     pose_estimator_class
-    angle_converter_class
-    tile_depthmeter_class
     )
