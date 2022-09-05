@@ -216,10 +216,10 @@ int main(int, char**) {
                 ang[i] -= 360;
             }
         }
-        tangs += ang[0];
-        for(int i = 0; i < ang.size(); i++)
-            cout << "Angle "<< i << ": " << ang[i] << endl; 
-        cout << "Total: " << tangs << endl; 
+        // tangs += ang[0];
+        // for(int i = 0; i < ang.size(); i++)
+        //     cout << "Angle "<< i << ": " << ang[i] << endl; 
+        // cout << "Total: " << tangs << endl; 
 
         Vector3f centroid_1_eigen;
         centroid_1_eigen << centroid_1.x, centroid_1.y, 1;
@@ -236,7 +236,7 @@ int main(int, char**) {
             cout << "class angle: " << estimator.GetYPR()[0] << endl;
             cout << "Class: " << tang << endl;
         }else{
-            cout << "Doh!" << endl; 
+            cout << estimator.GetErrorMsg() << endl; 
         }
 
         imshow("Class", estimator.GetProcessedFrame());
@@ -245,12 +245,13 @@ int main(int, char**) {
         gpu_frame_1.download(frame_1);
         gpu_frame_2.download(frame_2);
 
-        Mat filtered_matches_img; 
-        drawMatches(frame_1, keys_1, frame_2, keys_2, regionally_filtered_matches, filtered_matches_img);
-        // imshow("Frame 1", frame_1);
-        // imshow("Frame 2", frame_2);
-        imshow("Filtered Matches", filtered_matches_img);
-        waitKey(0);
+
+        // Mat filtered_matches_img; 
+        // drawMatches(frame_1, keys_1, frame_2, keys_2, regionally_filtered_matches, filtered_matches_img);
+        // // imshow("Frame 1", frame_1);
+        // // imshow("Frame 2", frame_2);
+        // imshow("Filtered Matches", filtered_matches_img);
+        // waitKey(0);
     }
 };
 
